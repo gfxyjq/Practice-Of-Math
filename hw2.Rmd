@@ -1,0 +1,275 @@
+---
+title: "Homework 2"
+author: "3230104912 Zhai Guoqing"
+date: \today
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+    
+---
+
+```{r setup, message = F, include=FALSE}
+options(htmltools.dir.version = FALSE)
+library(tidyverse)
+library(DAAG)
+```
+
+# 1.Loading and cleaning
+## a.Load the data into a dataframe called ca_pa:
+```{r}
+ca_pa <- read.csv("data/calif_penn_2011.csv")
+```
+
+## b.How many rows and columns does the dataframe have?
+```{r}
+dim(ca_pa)
+```
+
+## c.Explain what this command does:
+```{r}
+colSums(apply(ca_pa, c(1,2), is.na))
+```
+First, is.na() checks each cell in the dataframe to see if it contains an NA (missing value).
+
+Then, apply(ca_pa, c(1,2), is.na) applies the is.na() function to every cell (both rows and columns) of the dataframe.
+
+Finally, colSums() sums up the number of TRUE values (which represent NAs) for each column
+
+The result shows how many missing values exist in each column of the dataframe.
+
+## d.Use na.omit() to remove rows with NAs:
+```{r}
+ca_pa_clean <- na.omit(ca_pa)
+```
+
+## e.How many rows did this eliminate?
+```{r}
+rows_eliminated <- nrow(ca_pa) - nrow(ca_pa_clean)
+rows_eliminated
+```
+
+## f.Are your answers in (c) and (e) compatible? Explain:
+My answers in (c) and (e) are not numerically compatible because (c) shows the number of NAs per column, while (e) shows the number of deleted rows (where each row has at least one NA). The two values are not necessarily equal.
+
+# 2.This Very New House
+## a.Plot Median House Prices vs. Percentage of Houses Built Since 2005
+```{r}
+library(ggplot2)
+
+ggplot(ca_pa_clean, aes(x = Built_2005_or_later, y = Median_house_value)) +
+  geom_point(alpha = 0.5, color = "blue") +
+  labs(
+    title = "Median House Value vs. % of Houses Built Since 2005",
+    x = "Percentage of Houses Built Since 2005",
+    y = "Median House Value (USD)"
+  ) +
+  theme_minimal()
+```
+
+## b.Break Out the Plot by State (CA vs. PA)
+```{r}
+ca_pa_clean$State <- ifelse(ca_pa_clean$STATEFP == 6, "California", "Pennsylvania")
+
+ggplot(ca_pa_clean, aes(x = Built_2005_or_later, y = Median_house_value)) +
+  geom_point(alpha = 0.5, aes(color = State)) +
+  facet_wrap(~State, scales = "free") +
+  labs(
+    title = "Median House Value vs. % New Houses (2005+) by State",
+    x = "Percentage of Houses Built Since 2005",
+    y = "Median House Value (USD)"
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("California" = "darkorange", "Pennsylvania" = "navy"))
+```
+
+# 3.Nobody Home
+## a.Add Vacancy Rate Column
+```{r}
+ca_pa_clean$Vacancy_Rate <- ca_pa_clean$Vacant_units / ca_pa_clean$Total_units
+cat(
+  "Min:", min(ca_pa_clean$Vacancy_Rate, na.rm = TRUE), "\n",
+  "Max:", max(ca_pa_clean$Vacancy_Rate, na.rm = TRUE), "\n",
+  "Mean:", mean(ca_pa_clean$Vacancy_Rate, na.rm = TRUE), "\n",
+  "Median:", median(ca_pa_clean$Vacancy_Rate, na.rm = TRUE)
+)
+```
+
+## b.Plot Vacancy Rate vs. Median House Value
+```{r}
+ggplot(ca_pa_clean, aes(x = Vacancy_Rate, y = Median_house_value)) +
+  geom_point(alpha = 0.3, color = "purple") +
+  geom_smooth(method = "loess", color = "black") +
+  labs(
+    title = "Vacancy Rate vs. Median House Value",
+    x = "Vacancy Rate (Fraction)",
+    y = "Median House Value (USD)"
+  ) +
+  theme_minimal()
+```
+
+## c.Compare CA vs. PA
+```{r}
+ggplot(ca_pa_clean, aes(x = Vacancy_Rate, y = Median_house_value, color = State)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "loess") +
+  facet_wrap(~State, scales = "free_y") +
+  labs(
+    title = "Vacancy Rate vs. Median House Value by State",
+    x = "Vacancy Rate (Fraction)",
+    y = "Median House Value (USD)"
+  ) +
+  scale_color_manual(values = c("California" = "red", "Pennsylvania" = "blue")) +
+  theme_minimal()
+```
+
+California shows higher median home values (up to $750K) with likely lower vacancy rates in expensive areas (negative correlation).
+
+# 4.County Analysis
+## a.Explain the Code Block
+This code identifies census tracts in Alameda County, California (where STATEFP=6 and COUNTYFP=1), extracts their median home values (from column 10), and calculates the median of those values. It does this through two loops: the first collects row indices matching the location criteria, and the second retrieves and processes the corresponding home values. The result is the median home price for Alameda County.
+
+## b.Single-Line Equivalent
+```{r}
+median(ca_pa$Median_house_value[ca_pa$STATEFP == 6 & ca_pa$COUNTYFP == 1], na.rm = TRUE)
+```
+
+## c.Average % Housing Built Since 2005
+```{r}
+ca_pa %>%
+  filter(
+    (STATEFP == 6 & COUNTYFP %in% c(1, 85)) |
+    (STATEFP == 42 & COUNTYFP == 3)
+  ) %>%
+  group_by(COUNTYFP) %>%
+  summarise(
+    Avg_Percent_New_Housing = mean(Built_2005_or_later, na.rm = TRUE)
+  )
+```
+
+## d.Correlation Analysis
+```{r}
+cor(ca_pa$Median_house_value, ca_pa$Built_2005_or_later, use = "complete.obs")
+
+cor(ca_pa$Median_house_value[ca_pa$STATEFP == 6], 
+    ca_pa$Built_2005_or_later[ca_pa$STATEFP == 6], 
+    use = "complete.obs")
+
+cor(ca_pa$Median_house_value[ca_pa$STATEFP == 42], 
+    ca_pa$Built_2005_or_later[ca_pa$STATEFP == 42], 
+    use = "complete.obs")
+
+selected_counties <- ca_pa %>%
+  filter(
+    (STATEFP == 6 & COUNTYFP == 1) |
+    (STATEFP == 6 & COUNTYFP == 85) |
+    (STATEFP == 42 & COUNTYFP == 3) 
+  )
+
+selected_counties %>%
+  group_by(COUNTYFP) %>%
+  summarise(
+    Correlation = cor(Median_house_value, Built_2005_or_later, use = "complete.obs")
+  )
+```
+
+## e.Median House Value vs. Income Plots
+```{r}
+selected_counties <- ca_pa %>%
+  filter(
+    (STATEFP == 6 & COUNTYFP %in% c(1, 85)) | (STATEFP == 42 & COUNTYFP == 3)
+  ) %>%
+  mutate(
+    County = case_when(
+      COUNTYFP == 1 ~ "Alameda, CA",
+      COUNTYFP == 85 ~ "Santa Clara, CA",
+      COUNTYFP == 3 ~ "Allegheny, PA"
+    )
+  )
+
+ggplot(selected_counties, aes(x = Median_household_income, y = Median_house_value)) +
+  geom_point(aes(color = County), alpha = 0.6, na.rm = TRUE) +
+  geom_smooth(method = "lm", se = FALSE, na.rm = TRUE) +
+  facet_wrap(~County, scales = "free") +
+  labs(x = "Median_household_income", y = "Median_house_value", title = "Median House Value vs. Income") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# MB.Ch1.11
+```{r}
+gender <- factor(c(rep("female", 91), rep("male", 92)))
+table(gender)
+```
+
+Counts original factor: 91 "female", 92 "male" (alphabetical order).
+```{r}
+gender <- factor(gender, levels=c("male", "female"))
+table(gender)
+```
+
+**levels=c("male","female")** forces table to show counts as: 92 male, 91 female.
+```{r}
+gender <- factor(gender, levels=c("Male", "female"))
+# Note the mistake: "Male" should be "male"
+table(gender)
+```
+
+All 92 "male" values become NA, and table shows: 0 Male, 91 female (NA excluded by default).
+```{r}
+table(gender, exclude=NULL)
+```
+
+Reveals the 92 "lost" males as <NA> in output.
+```{r}
+rm(gender) # Remove gender
+```
+# MB.Ch1.12
+## a.Function and Test
+```{r}
+prop_above <- function(x, cutoff) {
+  mean(x > cutoff, na.rm = TRUE)
+}
+```
+
+Here’s a function prop_above() that computes the proportion of values in a vector x exceeding a given cutoff.
+```{r}
+x <- 1:100
+prop_above(x,50)  # Expected result : 0.5
+```
+Tested normally.
+
+## b.Escape Time Analysis
+```{r}
+library(Devore7)
+data(ex01.36)
+escape_times <- ex01.36 / 60
+library(lattice)
+dotplot(~escape_times,
+        xlab = "Escape Time (minutes)",
+        main = "Escape Time Distribution")
+prop_above(escape_times, 7)
+```
+
+
+# MB.Ch1.18
+```{r}
+library(MASS)
+data(Rabbit)
+Rabbit$Group <- interaction(Rabbit$Treatment, Rabbit$Dose, sep = "|")
+
+wide_bp <- unstack(Rabbit, BPchange ~ Group)
+treatment_info <- unstack(Rabbit, Treatment ~ Group)
+dose_info <- unstack(Rabbit, Dose ~ Group)
+
+final_data <- data.frame(
+  Treatment = as.character(treatment_info[1, ]),
+  Dose = as.numeric(dose_info[1, ]), 
+  t(wide_bp) 
+)
+colnames(final_data)[3:7] <- paste0("R", 1:5)
+final_data <- final_data[order(final_data$Treatment, final_data$Dose), ]
+rownames(final_data) <- NULL
+print(final_data)
+```
