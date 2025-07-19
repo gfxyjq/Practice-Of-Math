@@ -1,0 +1,118 @@
+---
+title: "Homework 5"
+author: "3230104912 Zhai Guoqing"
+date: \today
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+    
+---
+
+```{r setup, message = F, include=FALSE}
+options(htmltools.dir.version = FALSE)
+library(tidyverse)
+library(DAAG)
+```
+
+# 1.
+```{r}
+percentile_ratio_discrepancies <- function(P99, P99_5, P99_9, a) {
+  term1 <- ((P99 / P99_9)^(-a + 1) - 10)^2
+  term2 <- ((P99_5 / P99_9)^(-a + 1) - 5)^2
+  term3 <- ((P99 / P99_5)^(-a + 1) - 2)^2
+  return(term1 + term2 + term3)
+}
+
+#test the function
+print(percentile_ratio_discrepancies(1e6, 2e6, 1e7, 2))  #expected result:0
+```
+
+# 2.
+```{r}
+exponent_multi_ratios_est <- function(P99, P99_5, P99_9) {
+  initial_a <- 1 - log10(10) / log10(P99 / P99_9)
+  
+  result <- optim(
+    par = initial_a,
+    fn = function(a) percentile_ratio_discrepancies(P99, P99_5, P99_9, a),
+    method = "Brent",
+    lower = 0.1,
+    upper = 10
+  )
+  return(result$par)
+}
+#test the function
+print(exponent_multi_ratios_est(1e6, 2e6, 1e7))  #expected result:2
+```
+
+# 3.
+```{r}
+data <- read.csv("data/wtid-report.csv")
+
+estimate_a_over_time <- function(data) {
+  valid_data <- data[complete.cases(data[, c("P99.income.threshold", "P99.5.income.threshold", "P99.9.income.threshold")]), ]
+  
+  a_estimates <- sapply(1:nrow(valid_data), function(i) {
+    P99 <- valid_data$P99.income.threshold[i]
+    P99_5 <- valid_data$P99.5.income.threshold[i]
+    P99_9 <- valid_data$P99.9.income.threshold[i]
+    
+    exponent_multi_ratios_est(P99, P99_5, P99_9)
+  })
+  
+  data.frame(year = valid_data$Year, a_estimate = a_estimates)
+}
+
+results <- estimate_a_over_time(data)
+library(ggplot2)
+ggplot(results, aes(x = year, y = a_estimate)) +
+  geom_line() +
+  geom_point(size = 1.5) +
+  labs(title = "Pareto Exponent (a) Estimates for the US (1913-2012)",
+       x = "Year", y = "Estimated Pareto Exponent (a)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+# 4.
+```{r}
+compare_estimates <- function(data) {
+  valid_data <- data[complete.cases(data[, c("P99.income.threshold", "P99.9.income.threshold")]), ]
+  
+  multi_ratio <- sapply(1:nrow(valid_data), function(i) {
+    P99 <- valid_data$P99.income.threshold[i]
+    P99_5 <- valid_data$P99.5.income.threshold[i]
+    P99_9 <- valid_data$P99.9.income.threshold[i]
+    exponent_multi_ratios_est(P99, P99_5, P99_9)
+  })
+  
+  single_ratio <- sapply(1:nrow(valid_data), function(i) {
+    P99 <- valid_data$P99.income.threshold[i]
+    P99_9 <- valid_data$P99.9.income.threshold[i]
+    1 - log10(10) / log10(P99 / P99_9)
+  })
+  
+  data.frame(
+    year = valid_data$Year,
+    multi_ratio = multi_ratio,
+    single_ratio = single_ratio
+  )
+}
+
+comparison <- compare_estimates(data)
+
+ggplot(comparison, aes(x = multi_ratio, y = single_ratio)) +
+  geom_point(color = "darkorange", alpha = 0.7, size = 3) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Comparison of Pareto Exponent Estimation Methods",
+       x = "Multi-ratio Estimate of a",
+       y = "Single-ratio Estimate of a") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14))
+
+correlation <- cor(comparison$multi_ratio, comparison$single_ratio, use = "complete.obs")
+cat("Correlation coefficient between two methods:", round(correlation, 6), "\n")
+```
+The two estimates show an extremely high correlation (0.999883) but are not identical, indicating both methods are working correctly. The multi-ratio method provides slightly more refined estimates by incorporating additional percentile information (P99.5), while the single-ratio method serves as a good approximation. The near-perfect agreement suggests the US income data remarkably conforms to Pareto distribution assumptions across the studied period. The minimal differences (mean ~0.0003) imply that using P99.5 data adds only marginal precision in this case, likely because the three percentiles maintain nearly perfect theoretical Pareto relationships throughout the century.

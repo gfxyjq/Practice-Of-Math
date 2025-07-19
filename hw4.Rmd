@@ -1,0 +1,161 @@
+---
+title: "Homework 4"
+author: "3230104912 Zhai Guoqing"
+date: \today
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+    
+---
+
+```{r setup, message = F, include=FALSE}
+options(htmltools.dir.version = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+# 1.Clean the data
+```{r}
+library(tidyverse)
+ckm_nodes <- read_csv('data/ckm_nodes.csv',show_col_types = FALSE)
+noinfor <- which(is.na(ckm_nodes$adoption_date))
+ckm_nodes <- ckm_nodes[-noinfor, ]
+ckm_network <- read.table('data/ckm_network.dat')
+ckm_network <- ckm_network[-noinfor, -noinfor]
+```
+
+# 2.The new data frame
+```{r}
+library(tidyverse)
+ckm_nodes <- ckm_nodes %>% 
+  mutate(doctor_id = row_number())
+
+max_month <- max(ckm_nodes$adoption_date[is.finite(ckm_nodes$adoption_date)], na.rm = TRUE)
+
+panel_df <- expand_grid(
+  doctor_id = ckm_nodes$doctor_id,
+  month = 1:max_month
+) %>% 
+  left_join(ckm_nodes %>% select(doctor_id, adoption_date), by = "doctor_id") %>% 
+  mutate(
+    adopt_month = if_else(is.infinite(adoption_date), FALSE, adoption_date == month),
+    already_adopted = if_else(is.infinite(adoption_date), FALSE, adoption_date < month),
+    contacts_before = map2_dbl(
+      doctor_id, month,
+      ~sum(ckm_nodes$adoption_date[ckm_network[.x, ] == 1] < .y, na.rm = TRUE)
+    ),
+    contacts_up_to = map2_dbl(
+      doctor_id, month,
+      ~sum(ckm_nodes$adoption_date[ckm_network[.x, ] == 1] <= .y, na.rm = TRUE)
+    )
+  ) %>% 
+  select(-adoption_date)
+dim(panel_df)
+print(head(panel_df, 5))
+```
+
+According to the requirements, the columns should include the doctor identifier, month, and the four computed variables, totaling 6 columns. The number of rows should equal the number of doctors (125) multiplied by the maximum observed month (17), resulting in 2,125 rows.
+
+# 3.$p_k$ and $q_k$
+## a.Explanation
+Empirically, k≤21 because no doctor has more than 21 contacts who could have adopted tetracycline.
+
+## b.Plot the probabilities against the number of prior-adoptee contacts k
+```{r}
+library(ggplot2)
+
+pk_data <- panel_df %>%
+  filter(!already_adopted) %>%
+  group_by(contacts_before) %>%
+  summarise(
+    n_doctors = n(),
+    n_adopt = sum(adopt_month),
+    pk = n_adopt / n_doctors
+  ) %>%
+  filter(n_doctors >= 5)
+
+ggplot(pk_data, aes(x = contacts_before, y = pk)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE, color = "blue") +
+  labs(
+    title = "Estimated p_k: Adoption Probability vs. Prior-Adopting Contacts",
+    x = "Number of prior-adopting contacts (k)",
+    y = "Probability (p_k)"
+  ) +
+  theme_minimal()
+```
+
+## c.Plot the probabilities against the number of prior-or-contemporary-adoptee contacts k
+```{r}
+qk_data <- panel_df %>%
+  filter(!already_adopted) %>%
+  group_by(contacts_up_to) %>%
+  summarise(
+    n_doctors = n(),
+    n_adopt = sum(adopt_month),
+    qk = n_adopt / n_doctors
+  ) %>%
+  filter(n_doctors >= 5)
+
+ggplot(qk_data, aes(x = contacts_up_to, y = qk)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE, color = "red") +
+  labs(
+    title = "Estimated q_k: Adoption Probability vs. Cumulative Adopting Contacts",
+    x = "Number of prior-or-contemporary-adopting contacts (k)",
+    y = "Probability (q_k)"
+  ) +
+  theme_minimal()
+```
+
+# 4.
+## a.Linear Model: $p_k$=a+bk
+```{r}
+linear_model <- lm(pk ~ contacts_before, data = pk_data)
+summary(linear_model)
+```
+
+The linear regression estimates an intercept (baseline probability) of 0.107 (p=0.009), indicating doctors with no prior-adopting contacts have a 10.7% chance of adoption each month, while the slope of 0.0065 (p=0.412) suggests each additional adopting contact increases this probability by just 0.65%, though this effect is not statistically significant. The model explains only 13.8% of variance (R²=0.138), with predictions typically deviating from observations by ±3.8 percentage points (residual SE=0.038), indicating poor fit and likely requiring alternative approaches like logistic regression to better capture potential non-linear relationships in the data.
+
+## b.Logistic Model
+This logistic model is defined as \( p_k = \frac{e^{a + b k}}{1 + e^{a + b k}} \), assuming that a doctor's adoption probability follows an S-shaped (logistic) growth as the number of adopted contacts \( k \) increases. When \( b > 0 \):  
+
+- **Initial stage (small \( k \))**: Each additional adopted contact leads to a relatively rapid increase in probability (steep curve). 
+
+- **Saturation stage (large \( k \))**: The probability approaches 1, and the marginal impact of new contacts gradually diminishes (flattening curve).
+```{r}
+pk_data <- pk_data %>%
+  mutate(log_odds = log(pk / (1 - pk)))
+
+logistic_model <- lm(log_odds ~ contacts_before, data = pk_data)
+summary(logistic_model)
+```
+The logistic model suggests that each additional prior-adopting contact increases a doctor's log-odds of tetracycline adoption by 0.056 (coefficient for contacts_before). However, this effect is not statistically significant (p=0.371).
+
+## c.Plot the values
+```{r}
+# Predictions from both models
+pk_data <- pk_data %>%
+  mutate(
+    linear_pred = predict(linear_model, newdata = .),
+    logistic_pred = plogis(predict(logistic_model, newdata = .))
+  )
+
+ggplot(pk_data, aes(x = contacts_before)) +
+  geom_point(aes(y = pk), color = "black") +  # Observed p_k
+  geom_line(aes(y = linear_pred), color = "blue", linetype = "dashed") +  # Linear
+  geom_line(aes(y = logistic_pred), color = "red", linetype = "dotted") +  # Logistic
+  labs(
+    title = "Comparison of Linear vs. Logistic Models for p_k",
+    x = "Number of prior-adopting contacts (k)",
+    y = "Adoption probability (p_k)"
+  ) +
+  theme_minimal() +
+  scale_color_manual(
+    values = c("black", "blue", "red"),
+    labels = c("Data", "Linear", "Logistic")
+  )
+```
+
+The logistic model is better because it realistically bounds probabilities between 0 and 1 and better fits the data's pattern. While neither model shows strong significance, the logistic curve more accurately reflects real-world adoption behavior than the linear model's oversimplified straight-line approach.
